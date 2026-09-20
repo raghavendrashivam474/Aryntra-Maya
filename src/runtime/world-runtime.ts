@@ -11,6 +11,9 @@ import {
   type GetWorldQuery,
   type GetEntityQuery,
   type ListEntitiesQuery,
+  type FindEntitiesQuery,
+  type GetNeighborsQuery,
+  type FindPathQuery,
 } from "../schemas/query.schema.js";
 import {
   WorldSchema,
@@ -85,6 +88,7 @@ export class WorldRuntime {
 
   /**
    * Executes a Query against the current World state.
+   * Queries are read-only and must never mutate world state.
    */
   async query<T = unknown>(rawQuery: Query): Promise<T | null> {
     const parseResult = QuerySchema.safeParse(rawQuery);
@@ -101,10 +105,16 @@ export class WorldRuntime {
         return this.handleGetEntity(query) as Promise<T | null>;
       case "LIST_ENTITIES":
         return this.handleListEntities(query) as Promise<T | null>;
+      case "FIND_ENTITIES":
+        return this.handleFindEntities(query) as Promise<T | null>;
       case "GET_RELATIONSHIP":
         return this.handleGetRelationship(query) as Promise<T | null>;
       case "LIST_RELATIONSHIPS":
         return this.handleListRelationships(query) as Promise<T | null>;
+      case "GET_NEIGHBORS":
+        return this.handleGetNeighbors(query) as Promise<T | null>;
+      case "FIND_PATH":
+        return this.handleFindPath(query) as Promise<T | null>;
       default: {
         const _exhaustive: never = query;
         throw new Error(`Unhandled query type: ${JSON.stringify(_exhaustive)}`);
@@ -447,7 +457,6 @@ export class WorldRuntime {
   private async handleGetWorld(query: GetWorldQuery): Promise<World | null> {
     const world = await this.store.getWorld(query.payload.worldId);
     if (!world) return null;
-    // Backfill empty relationships for raw backward-compatible store states
     if (!world.state.relationships) {
       world.state.relationships = {};
     }
@@ -463,11 +472,41 @@ export class WorldRuntime {
   private async handleListEntities(query: ListEntitiesQuery): Promise<Entity[]> {
     const world = await this.store.getWorld(query.payload.worldId);
     if (!world) return [];
-    const allEntities = Object.values(world.state.entities);
+    let allEntities = Object.values(world.state.entities);
     if (query.payload.type) {
-      return allEntities.filter((e) => e.type === query.payload.type);
+      allEntities = allEntities.filter((e) => e.type === query.payload.type);
     }
-    return allEntities;
+    // S3: deterministic ordering by entity ID
+    return allEntities.sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  private async handleFindEntities(query: FindEntitiesQuery): Promise<Entity[]> {
+    const world = await this.store.getWorld(query.payload.worldId);
+    if (!world) return [];
+
+    let results = Object.values(world.state.entities);
+
+    // Filter by entity type
+    if (query.payload.type) {
+      results = results.filter((e) => e.type === query.payload.type);
+    }
+
+    // Filter by property key+value equality
+    if (query.payload.propertyKey !== undefined) {
+      const key = query.payload.propertyKey;
+      const val = query.payload.propertyValue;
+      results = results.filter((e) => {
+        const propVal = e.properties[key];
+        if (val === undefined) {
+          // propertyKey without propertyValue means "exists"
+          return propVal !== undefined;
+        }
+        return propVal === val;
+      });
+    }
+
+    // S3: deterministic ordering by entity ID
+    return results.sort((a, b) => a.id.localeCompare(b.id));
   }
 
   private async handleGetRelationship(
@@ -494,6 +533,127 @@ export class WorldRuntime {
     if (query.payload.type) {
       list = list.filter((r) => r.type === query.payload.type);
     }
-    return list;
+    // S3: deterministic ordering by relationship ID
+    return list.sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  private async handleGetNeighbors(
+    query: GetNeighborsQuery
+  ): Promise<Entity[]> {
+    const world = await this.store.getWorld(query.payload.worldId);
+    if (!world) return [];
+    if (!world.state.relationships) return [];
+
+    const entityId = query.payload.entityId;
+    const direction = query.payload.direction;
+    const relType = query.payload.relationshipType;
+
+    // Verify the entity exists
+    if (!world.state.entities[entityId]) return [];
+
+    const neighborIds = new Set<string>();
+
+    for (const rel of Object.values(world.state.relationships)) {
+      // Optional relationship type filter
+      if (relType && rel.type !== relType) continue;
+
+      if (
+        (direction === "outgoing" || direction === "both") &&
+        rel.sourceEntityId === entityId
+      ) {
+        neighborIds.add(rel.targetEntityId);
+      }
+
+      if (
+        (direction === "incoming" || direction === "both") &&
+        rel.targetEntityId === entityId
+      ) {
+        neighborIds.add(rel.sourceEntityId);
+      }
+    }
+
+    // Resolve neighbor entities, filtering out any that no longer exist
+    const neighbors: Entity[] = [];
+    for (const nId of neighborIds) {
+      const entity = world.state.entities[nId];
+      if (entity) {
+        neighbors.push(entity);
+      }
+    }
+
+    // S3: deterministic ordering by entity ID
+    return neighbors.sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  private async handleFindPath(
+    query: FindPathQuery
+  ): Promise<string[] | null> {
+    const world = await this.store.getWorld(query.payload.worldId);
+    if (!world) return null;
+    if (!world.state.relationships) return null;
+
+    const { sourceEntityId, targetEntityId, maxDepth, relationshipType } =
+      query.payload;
+
+    // Verify both entities exist
+    if (!world.state.entities[sourceEntityId]) return null;
+    if (!world.state.entities[targetEntityId]) return null;
+
+    // Trivial case
+    if (sourceEntityId === targetEntityId) return [sourceEntityId];
+
+    // Build adjacency list (bidirectional traversal)
+    const adjacency = new Map<string, string[]>();
+    for (const rel of Object.values(world.state.relationships)) {
+      if (relationshipType && rel.type !== relationshipType) continue;
+
+      if (!adjacency.has(rel.sourceEntityId)) {
+        adjacency.set(rel.sourceEntityId, []);
+      }
+      if (!adjacency.has(rel.targetEntityId)) {
+        adjacency.set(rel.targetEntityId, []);
+      }
+
+      adjacency.get(rel.sourceEntityId)!.push(rel.targetEntityId);
+      adjacency.get(rel.targetEntityId)!.push(rel.sourceEntityId);
+    }
+
+    // BFS with depth tracking
+    // Queue entries: [currentEntityId, pathSoFar]
+    const queue: Array<[string, string[]]> = [
+      [sourceEntityId, [sourceEntityId]],
+    ];
+    const visited = new Set<string>([sourceEntityId]);
+
+    while (queue.length > 0) {
+      const [current, path] = queue.shift()!;
+
+      const currentHops = path.length - 1;
+      if (currentHops >= maxDepth) continue;
+
+      const neighbors = adjacency.get(current) ?? [];
+      // S3: deterministic exploration order
+      const sortedNeighbors = [...neighbors].sort();
+
+      for (const neighbor of sortedNeighbors) {
+        const nextPath = [...path, neighbor];
+        const nextHops = nextPath.length - 1;
+
+        if (neighbor === targetEntityId) {
+          if (nextHops <= maxDepth) {
+            return nextPath;
+          }
+          continue;
+        }
+
+        if (!visited.has(neighbor) && nextHops < maxDepth) {
+          visited.add(neighbor);
+          queue.push([neighbor, nextPath]);
+        }
+      }
+    }
+
+    return null;
   }
 }
+
