@@ -1,0 +1,40 @@
+﻿# Maya Evolution Principles
+
+This document defines the rules governing how Aryntra Maya evolves over time.
+
+---
+
+## 1. Prime Directive
+
+> ### **Nothing is permanent by default.**
+
+Every component in Maya must be designed with the expectation that it may be replaced, upgraded, or completely rewritten in another technology or pattern.
+
+Potentially replaceable components:
+- UI framework (React, WebGL, CLI, native desktop)
+- Runtime engine (TypeScript -> Rust / WASM)
+- Persistence storage (In-memory -> IndexedDB -> SQLite -> Distributed)
+- Schema definitions and versions
+- Entity component models
+
+---
+
+## 2. Strong vs Rigid
+
+```text
+Strong  = Evolvable + Replaceable + Migratable + Versionable + Testable + Loosely coupled + Composable
+```
+
+- Strong architecture provides firm boundaries so internal implementations can be ripped out and replaced without 
+  disturbing adjacent layers.
+- Rigid architecture binds layers tightly together, making change costly and risky.
+
+## 3. Evolution Rules
+
+1. **Explicit Ports & Adapters**: Storage, network, and capabilities must sit behind interfaces (ports). Core domain 
+   code never imports database drivers or UI libraries.
+2. **Schema Versioning**: Every domain object that can be serialized must carry schema version information to 
+   allow automated future migrations.
+3. **CQRS Separation**: State changes must always occur through Commands; state inspection must always occur through Queries.
+4. **No Silent Rewrites**: If an architectural pattern needs to be upgraded or replaced, document the rationale in 
+   an Architecture Decision Record (ADR) first.
