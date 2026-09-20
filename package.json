@@ -1,35 +1,31 @@
-﻿{
-    "name":  "aryntra-maya",
-    "version":  "0.1.0",
-    "description":  "Maya — Persistent, interactive digital worlds engine",
-    "type":  "module",
-    "main":  "dist/index.js",
-    "types":  "dist/index.d.ts",
-    "scripts":  {
-                    "test":  "vitest run",
-                    "test:watch":  "vitest",
-                    "typecheck":  "tsc --noEmit",
-                    "build":  "tsc"
-                },
-    "keywords":  [
-                     "world-engine",
-                     "simulation",
-                     "state-machine",
-                     "events"
-                 ],
-    "author":  "Aryntra",
-    "license":  "UNLICENSED",
-    "dependencies":  {
-                         "zod":  "^3.24.2"
-                     },
-    "devDependencies":  {
-                            "@types/node":  "^22.13.5",
-                            "typescript":  "^5.7.3",
-                            "vitest":  "^3.0.7"
-                        },
-    "pnpm":  {
-                 "onlyBuiltDependencies":  [
-                                               "esbuild"
-                                           ]
-             }
+{
+    "name": "aryntra-maya",
+    "version": "0.1.0",
+    "description": "Maya — Persistent, interactive digital worlds engine",
+    "type": "module",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "scripts": {
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "typecheck": "tsc --noEmit",
+        "build": "tsc"
+    },
+    "keywords": [
+        "world-engine",
+        "simulation",
+        "state-machine",
+        "events"
+    ],
+    "author": "Aryntra",
+    "license": "UNLICENSED",
+    "dependencies": {
+        "zod": "^3.24.2"
+    },
+    "devDependencies": {
+        "@types/node": "^22.13.5",
+        "fake-indexeddb": "^6.2.5",
+        "typescript": "^5.7.3",
+        "vitest": "^3.0.7"
+    }
 }

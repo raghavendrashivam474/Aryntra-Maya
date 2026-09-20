@@ -1,74 +1,44 @@
 ﻿import { describe, it, expect, beforeEach } from "vitest";
 import { InMemoryWorldStore } from "../../src/persistence/memory/in-memory-world-store.js";
-import type { World } from "../../src/schemas/world.schema.js";
-import type { WorldCreatedEvent } from "../../src/schemas/event.schema.js";
+import { defineWorldStoreContractTests } from "./world-store.contract.js";
 
-describe("InMemoryWorldStore", () => {
+// Run standard contract tests
+defineWorldStoreContractTests("InMemoryWorldStore", () => new InMemoryWorldStore());
+
+// Additional In-Memory specific unit tests
+describe("InMemoryWorldStore (Implementation specifics)", () => {
   let store: InMemoryWorldStore;
 
   beforeEach(() => {
     store = new InMemoryWorldStore();
   });
 
-  it("should return null for non-existent world", async () => {
-    const world = await store.getWorld("unknown");
-    expect(world).toBeNull();
-  });
-
-  it("should save and retrieve a world", async () => {
-    const world: World = {
-      id: "world-1",
+  it("should clear all data when clear() is called", async () => {
+    await store.saveWorld({
+      id: "w1",
       schemaVersion: 1,
-      metadata: { name: "Test World", description: "Desc" },
-      state: { entities: {} },
-      createdAt: 1000,
-      updatedAt: 1000,
-    };
+      metadata: { name: "W1", description: "" },
+      state: { entities: {}, relationships: {} },
+      createdAt: 100,
+      updatedAt: 100,
+    });
 
-    await store.saveWorld(world);
-    const has = await store.hasWorld("world-1");
-    expect(has).toBe(true);
-
-    const retrieved = await store.getWorld("world-1");
-    expect(retrieved).toEqual(world);
-  });
-
-  it("should prevent external mutations to internal store state", async () => {
-    const world: World = {
-      id: "world-1",
-      schemaVersion: 1,
-      metadata: { name: "Test World", description: "" },
-      state: { entities: {} },
-      createdAt: 1000,
-      updatedAt: 1000,
-    };
-
-    await store.saveWorld(world);
-
-    // Mutate original object
-    world.metadata.name = "Mutated Name";
-
-    const retrieved = await store.getWorld("world-1");
-    expect(retrieved?.metadata.name).toBe("Test World");
-  });
-
-  it("should append and retrieve events chronologically", async () => {
-    const event: WorldCreatedEvent = {
+    await store.appendEvent({
       eventId: "e1",
-      worldId: "world-1",
+      worldId: "w1",
       type: "WORLD_CREATED",
-      timestamp: 1000,
+      timestamp: 100,
       schemaVersion: 1,
-      payload: {
-        worldId: "world-1",
-        name: "Test",
-        description: "",
-      },
-    };
+      payload: { worldId: "w1", name: "W1", description: "" },
+    });
 
-    await store.appendEvent(event);
-    const events = await store.getEvents("world-1");
-    expect(events).toHaveLength(1);
-    expect(events[0]).toEqual(event);
+    expect(await store.hasWorld("w1")).toBe(true);
+    expect((await store.getEvents("w1")).length).toBe(1);
+
+    store.clear();
+
+    expect(await store.hasWorld("w1")).toBe(false);
+    expect(await store.getWorld("w1")).toBeNull();
+    expect((await store.getEvents("w1")).length).toBe(0);
   });
 });
