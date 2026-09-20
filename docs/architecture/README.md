@@ -69,3 +69,13 @@ This document outlines the high-level architecture and boundaries of Aryntra May
 - **Implementations**:
       - InMemoryWorldStore (default for S0, unit testing).
       -Future adapters: IndexedDB, SQLite, PostgreSQL.
+
+## 6. World Evolution & Relationships (S1 Extensions)
+
+- **Entity Lifecycle Updates**:
+  - UPDATE_ENTITY: Safely updates generic entity properties, preserving createdAt and tracking historical mutations via ENTITY_UPDATED events with previousProperties.
+  - DELETE_ENTITY: Removes entities from world state.
+- **Relationship Model**:
+  - Generic directed graphs are established between arbitrary entities via Relationship models containing id, sourceEntityId, 	argetEntityId, and a dynamic property payload.
+- **Referential Integrity Cascading (ADR-0002)**:
+  - When an entity is deleted, any relationship that references it as a source or target is automatically purged from the world state to avoid dangling references, emitting corresponding RELATIONSHIP_DELETED events.
