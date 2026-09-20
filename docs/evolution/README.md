@@ -54,3 +54,12 @@ During Sprint S2, Maya proved its prime directive of evolvability and replaceabi
 3. **Validated Serialization Boundary**: By executing schema validation and version checks on load, Maya establishes a strict boundary. Untrusted raw database values are rejected before corrupting the active memory space of the runtime.
 4. **Continuity Verification**: Vertical slice tests proved that the world state can seamlessly survive across multiple distinct, independent WorldRuntime lifetimes.
 
+
+## 6. S3 Evolution Case Study (World Semantics & Query Foundation)
+
+During Sprint S3, Maya evolved to support structural world inspection and deterministic querying. This was achieved without breaking Sprint S0–S2 foundations:
+1. **Additive Query Extensions**: Three new query types (`FIND_ENTITIES`, `GET_NEIGHBORS`, `FIND_PATH`) were introduced by extending the existing `QuerySchema` discriminated union. No existing query types were modified.
+2. **Signature Preservation**: The `WorldRuntime.query()` method signature (`Promise<T | null>`) remained identical to S0–S2. No `QueryResult<T>` wrapper was introduced, preserving backward compatibility with all 53 existing tests.
+3. **Persistence Independence Maintained**: S3 queries operate exclusively through the existing `WorldStore.getWorld()` read path. No new persistence port methods were added. The `IndexedDBWorldStore` and `InMemoryWorldStore` required zero changes.
+4. **Determinism by Contract**: List-based queries now guarantee stable ordering by ID, eliminating implicit dependence on JavaScript object insertion order or IndexedDB implementation behavior.
+5. **Automated Verification**: All 53 S0–S2 tests continued to pass unmodified. S3 added 16 new tests covering schema validation, entity filtering, neighbor traversal, bounded path discovery, deterministic ordering, mutation isolation, and cross-runtime persistence continuity.

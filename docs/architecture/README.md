@@ -90,3 +90,17 @@ This document outlines the high-level architecture and boundaries of Aryntra May
 - **Data Flow (Load)**: Durable Storage → Raw Data → Zod Validation → Schema Version Check → World → WorldRuntime.
 - **Storage Independence**: WorldRuntime depends only on the WorldStore interface. It has zero knowledge of whether the underlying storage is RAM, IndexedDB, or any future adapter.
 
+
+## 8. World Semantics & Query Foundation (S3)
+
+- **Core Principle**: A World can be meaningfully inspected and queried through stable, deterministic contracts without mutating state or bypassing architectural boundaries.
+- **Query Categories**:
+  - **Entity Inspection**: `GET_ENTITY`, `LIST_ENTITIES`, `FIND_ENTITIES` (with optional type filter, property key/value equality, and property existence checks).
+  - **Relationship Inspection**: `GET_RELATIONSHIP`, `LIST_RELATIONSHIPS` (with optional source, target, and type filters).
+  - **Neighbor Traversal**: `GET_NEIGHBORS` returns connected entities via relationships, supporting `outgoing`, `incoming`, and `both` directions with optional relationship type filtering.
+  - **Bounded Path Discovery**: `FIND_PATH` performs deterministic BFS traversal between two entities, bounded by `maxDepth` and optionally filtered by relationship type. Returns an entity ID chain or `null`.
+- **Deterministic Ordering**: All list-based query results are sorted by entity/relationship ID using `localeCompare`, ensuring identical inputs always produce identical outputs regardless of insertion order or persistence implementation.
+- **Read-Only Guarantee**: Queries never mutate world state, never emit events, and never trigger persistence writes. Mutation isolation is verified by comparing store snapshots before and after query execution.
+- **No Persistence Changes**: S3 queries operate entirely through the existing `WorldStore.getWorld()` read path. No new persistence port methods were introduced. Both `InMemoryWorldStore` and `IndexedDBWorldStore` support S3 queries without modification.
+- **No Architectural Changes**: S3 was implemented entirely within existing architectural seams (Case A). The `WorldRuntime.query()` method and `QuerySchema` discriminated union were extended additively. No ADR was required.
+- **CQRS Preservation**: The command/query boundary remains strict. Commands mutate and emit events. Queries observe and return data. The `query()` return type (`T | null`) was preserved from S0–S2 to maintain backward compatibility with all existing consumers.
