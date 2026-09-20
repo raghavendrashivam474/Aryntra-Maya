@@ -67,8 +67,11 @@ This document outlines the high-level architecture and boundaries of Aryntra May
 
 - **Role**: Defines storage abstraction interface (WorldStore).
 - **Implementations**:
-      - InMemoryWorldStore (default for S0, unit testing).
-      -Future adapters: IndexedDB, SQLite, PostgreSQL.
+      - InMemoryWorldStore (default for S0/S1, unit testing, environments without IndexedDB).
+      - IndexedDBWorldStore (S2 durable adapter for browser-native persistence).
+- **Contract Tests**: All implementations must satisfy the same behavioral contract (tests/persistence/world-store.contract.ts).
+- **Serialization Boundary**: Data loaded from any adapter is treated as untrusted. Records are validated through Zod schemas (WorldSchema, EventSchema) and checked for supported schemaVersion before entering the runtime.
+- **Persistence Errors**: Storage failures are wrapped in controlled error types (InitializationError, ReadError, WriteError, PersistenceValidationError, UnsupportedSchemaVersionError) to prevent raw storage exceptions from leaking into the runtime.
 
 ## 6. World Evolution & Relationships (S1 Extensions)
 
@@ -79,3 +82,11 @@ This document outlines the high-level architecture and boundaries of Aryntra May
   - Generic directed graphs are established between arbitrary entities via Relationship models containing id, sourceEntityId, 	argetEntityId, and a dynamic property payload.
 - **Referential Integrity Cascading (ADR-0002)**:
   - When an entity is deleted, any relationship that references it as a source or target is automatically purged from the world state to avoid dangling references, emitting corresponding RELATIONSHIP_DELETED events.
+
+## 7. World Continuity & Persistence Lifecycle (S2)
+
+- **Core Principle**: Runtime lifetime ≠ World lifetime. A world can survive the destruction of one WorldRuntime instance and be recovered by another.
+- **Data Flow (Save)**: Command → Validation → WorldRuntime → State Transition → Event → WorldStore → Durable Storage.
+- **Data Flow (Load)**: Durable Storage → Raw Data → Zod Validation → Schema Version Check → World → WorldRuntime.
+- **Storage Independence**: WorldRuntime depends only on the WorldStore interface. It has zero knowledge of whether the underlying storage is RAM, IndexedDB, or any future adapter.
+
