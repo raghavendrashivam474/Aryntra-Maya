@@ -140,8 +140,8 @@ export function defineWorldStoreContractTests(
     });
 
     it("should append and retrieve events in chronological order", async () => {
-      const event1 = createTestEvent("world-1", "evt-1", 100);
-      const event2 = createTestEvent("world-1", "evt-2", 200);
+      const event1 = createTestEvent("world-1", "00000000-0000-0000-0000-000000000001", 100);
+      const event2 = createTestEvent("world-1", "00000000-0000-0000-0000-000000000002", 200);
 
       await store.appendEvent(event1);
       await store.appendEvent(event2);
@@ -153,8 +153,8 @@ export function defineWorldStoreContractTests(
     });
 
     it("should isolate events between different worlds", async () => {
-      const eventA = createTestEvent("world-a", "evt-a1", 100);
-      const eventB = createTestEvent("world-b", "evt-b1", 100);
+      const eventA = createTestEvent("world-a", "00000000-0000-0000-0000-00000000000a", 100);
+      const eventB = createTestEvent("world-b", "00000000-0000-0000-0000-00000000000b", 100);
 
       await store.appendEvent(eventA);
       await store.appendEvent(eventB);
@@ -163,10 +163,10 @@ export function defineWorldStoreContractTests(
       const eventsB = await store.getEvents("world-b");
 
       expect(eventsA).toHaveLength(1);
-      expect(eventsA[0]?.eventId).toBe("evt-a1");
+      expect(eventsA[0]?.eventId).toBe("00000000-0000-0000-0000-00000000000a");
 
       expect(eventsB).toHaveLength(1);
-      expect(eventsB[0]?.eventId).toBe("evt-b1");
+      expect(eventsB[0]?.eventId).toBe("00000000-0000-0000-0000-00000000000b");
     });
   });
 }
