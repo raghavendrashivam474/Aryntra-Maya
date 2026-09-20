@@ -20,6 +20,10 @@ import {
   EntitySchema,
   type Entity,
 } from "../schemas/entity.schema.js";
+import {
+  type Relationship,
+  RelationshipSchema,
+} from "../schemas/relationship.schema.js";
 import type {
   WorldCreatedEvent,
   EntityCreatedEvent,
@@ -31,6 +35,7 @@ export interface CommandSuccessResult<T = unknown> {
   success: true;
   data: T;
   event: MayaEvent;
+  events?: MayaEvent[];
 }
 
 export interface CommandFailureResult {
@@ -62,6 +67,12 @@ export class WorldRuntime {
         return this.handleCreateWorld(command) as Promise<CommandResult<T>>;
       case "CREATE_ENTITY":
         return this.handleCreateEntity(command) as Promise<CommandResult<T>>;
+      case "UPDATE_ENTITY":
+        return this.handleUpdateEntity(command) as Promise<CommandResult<T>>;
+      case "DELETE_ENTITY":
+        return this.handleDeleteEntity(command) as Promise<CommandResult<T>>;
+      case "CREATE_RELATIONSHIP":
+        return this.handleCreateRelationship(command) as Promise<CommandResult<T>>;
       default: {
         const _exhaustive: never = command;
         return {
@@ -90,6 +101,10 @@ export class WorldRuntime {
         return this.handleGetEntity(query) as Promise<T | null>;
       case "LIST_ENTITIES":
         return this.handleListEntities(query) as Promise<T | null>;
+      case "GET_RELATIONSHIP":
+        return this.handleGetRelationship(query) as Promise<T | null>;
+      case "LIST_RELATIONSHIPS":
+        return this.handleListRelationships(query) as Promise<T | null>;
       default: {
         const _exhaustive: never = query;
         throw new Error(`Unhandled query type: ${JSON.stringify(_exhaustive)}`);
@@ -129,6 +144,7 @@ export class WorldRuntime {
       },
       state: {
         entities: {},
+        relationships: {},
       },
       createdAt: now,
       updatedAt: now,
@@ -217,10 +233,225 @@ export class WorldRuntime {
     };
   }
 
+  private async handleUpdateEntity(
+    cmd: Extract<Command, { type: "UPDATE_ENTITY" }>
+  ): Promise<CommandResult<Entity>> {
+    const { worldId, entityId, properties } = cmd.payload;
+
+    const world = await this.store.getWorld(worldId);
+    if (!world) {
+      return {
+        success: false,
+        error: `World with id '${worldId}' does not exist`,
+      };
+    }
+
+    const existingEntity = world.state.entities[entityId];
+    if (!existingEntity) {
+      return {
+        success: false,
+        error: `Entity with id '${entityId}' does not exist in world '${worldId}'`,
+      };
+    }
+
+    const now = Date.now();
+    const previousProperties = { ...existingEntity.properties };
+    const updatedEntity: Entity = {
+      ...existingEntity,
+      properties: {
+        ...existingEntity.properties,
+        ...properties,
+      },
+      updatedAt: now,
+    };
+
+    world.state.entities[entityId] = updatedEntity;
+    world.updatedAt = now;
+
+    const event: MayaEvent = {
+      eventId: randomUUID(),
+      worldId,
+      type: "ENTITY_UPDATED",
+      timestamp: now,
+      schemaVersion: 1,
+      payload: {
+        worldId,
+        entityId,
+        properties,
+        previousProperties,
+      },
+    };
+
+    await this.store.saveWorld(world);
+    await this.store.appendEvent(event);
+
+    return {
+      success: true,
+      data: updatedEntity,
+      event,
+    };
+  }
+
+  private async handleDeleteEntity(
+    cmd: Extract<Command, { type: "DELETE_ENTITY" }>
+  ): Promise<CommandResult<Entity>> {
+    const { worldId, entityId } = cmd.payload;
+
+    const world = await this.store.getWorld(worldId);
+    if (!world) {
+      return {
+        success: false,
+        error: `World with id '${worldId}' does not exist`,
+      };
+    }
+
+    const entity = world.state.entities[entityId];
+    if (!entity) {
+      return {
+        success: false,
+        error: `Entity with id '${entityId}' does not exist in world '${worldId}'`,
+      };
+    }
+
+    const now = Date.now();
+    delete world.state.entities[entityId];
+
+    // Cascade delete affected relationships per ADR-0002
+    const deletedRelationshipEvents: MayaEvent[] = [];
+    if (world.state.relationships) {
+      for (const [relId, rel] of Object.entries(world.state.relationships)) {
+        if (rel.sourceEntityId === entityId || rel.targetEntityId === entityId) {
+          delete world.state.relationships[relId];
+          deletedRelationshipEvents.push({
+            eventId: randomUUID(),
+            worldId,
+            type: "RELATIONSHIP_DELETED",
+            timestamp: now,
+            schemaVersion: 1,
+            payload: {
+              worldId,
+              relationshipId: relId,
+            },
+          });
+        }
+      }
+    }
+
+    const entityDeletedEvent: MayaEvent = {
+      eventId: randomUUID(),
+      worldId,
+      type: "ENTITY_DELETED",
+      timestamp: now,
+      schemaVersion: 1,
+      payload: {
+        worldId,
+        entityId,
+      },
+    };
+
+    world.updatedAt = now;
+
+    await this.store.saveWorld(world);
+    await this.store.appendEvent(entityDeletedEvent);
+    for (const relEvent of deletedRelationshipEvents) {
+      await this.store.appendEvent(relEvent);
+    }
+
+    return {
+      success: true,
+      data: entity,
+      event: entityDeletedEvent,
+      events: [entityDeletedEvent, ...deletedRelationshipEvents],
+    };
+  }
+
+  private async handleCreateRelationship(
+    cmd: Extract<Command, { type: "CREATE_RELATIONSHIP" }>
+  ): Promise<CommandResult<Relationship>> {
+    const { worldId, relationship: relInput } = cmd.payload;
+
+    const world = await this.store.getWorld(worldId);
+    if (!world) {
+      return {
+        success: false,
+        error: `World with id '${worldId}' does not exist`,
+      };
+    }
+
+    if (!world.state.entities[relInput.sourceEntityId]) {
+      return {
+        success: false,
+        error: `Source entity '${relInput.sourceEntityId}' does not exist in world '${worldId}'`,
+      };
+    }
+
+    if (!world.state.entities[relInput.targetEntityId]) {
+      return {
+        success: false,
+        error: `Target entity '${relInput.targetEntityId}' does not exist in world '${worldId}'`,
+      };
+    }
+
+    if (!world.state.relationships) {
+      world.state.relationships = {};
+    }
+
+    if (world.state.relationships[relInput.id]) {
+      return {
+        success: false,
+        error: `Relationship with id '${relInput.id}' already exists in world '${worldId}'`,
+      };
+    }
+
+    const now = Date.now();
+    const rawRelationship: Relationship = {
+      id: relInput.id,
+      sourceEntityId: relInput.sourceEntityId,
+      targetEntityId: relInput.targetEntityId,
+      type: relInput.type,
+      properties: relInput.properties ?? {},
+      schemaVersion: 1,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const relationship = RelationshipSchema.parse(rawRelationship);
+
+    world.state.relationships[relationship.id] = relationship;
+    world.updatedAt = now;
+
+    const event: MayaEvent = {
+      eventId: randomUUID(),
+      worldId,
+      type: "RELATIONSHIP_CREATED",
+      timestamp: now,
+      schemaVersion: 1,
+      payload: {
+        worldId,
+        relationship,
+      },
+    };
+
+    await this.store.saveWorld(world);
+    await this.store.appendEvent(event);
+
+    return {
+      success: true,
+      data: relationship,
+      event,
+    };
+  }
+
   // --- Query Handlers ---
 
   private async handleGetWorld(query: GetWorldQuery): Promise<World | null> {
-    return this.store.getWorld(query.payload.worldId);
+    const world = await this.store.getWorld(query.payload.worldId);
+    if (!world) return null;
+    // Backfill empty relationships for raw backward-compatible store states
+    if (!world.state.relationships) {
+      world.state.relationships = {};
+    }
+    return world;
   }
 
   private async handleGetEntity(query: GetEntityQuery): Promise<Entity | null> {
@@ -237,5 +468,32 @@ export class WorldRuntime {
       return allEntities.filter((e) => e.type === query.payload.type);
     }
     return allEntities;
+  }
+
+  private async handleGetRelationship(
+    query: Extract<Query, { type: "GET_RELATIONSHIP" }>
+  ): Promise<Relationship | null> {
+    const world = await this.store.getWorld(query.payload.worldId);
+    if (!world) return null;
+    return world.state.relationships?.[query.payload.relationshipId] ?? null;
+  }
+
+  private async handleListRelationships(
+    query: Extract<Query, { type: "LIST_RELATIONSHIPS" }>
+  ): Promise<Relationship[]> {
+    const world = await this.store.getWorld(query.payload.worldId);
+    if (!world) return [];
+    if (!world.state.relationships) return [];
+    let list = Object.values(world.state.relationships);
+    if (query.payload.sourceEntityId) {
+      list = list.filter((r) => r.sourceEntityId === query.payload.sourceEntityId);
+    }
+    if (query.payload.targetEntityId) {
+      list = list.filter((r) => r.targetEntityId === query.payload.targetEntityId);
+    }
+    if (query.payload.type) {
+      list = list.filter((r) => r.type === query.payload.type);
+    }
+    return list;
   }
 }
